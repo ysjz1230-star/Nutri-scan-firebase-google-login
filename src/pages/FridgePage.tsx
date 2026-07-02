@@ -1,0 +1,676 @@
+import { useState, useRef, useEffect } from 'react';
+import { Refrigerator, Camera, Plus, X, Trash2, ChefHat, Upload } from 'lucide-react';
+import { useStore } from '../stores/useStore';
+import { useAuthStore } from '../stores/useAuthStore';
+import { useGuestStore } from '../stores/useGuestStore';
+import { differenceInDays } from 'date-fns';
+import { compressImage } from '../utils/imageCompressor';
+import LoginPromptModal from '../components/LoginPromptModal';
+import type { DetectedIngredient, FridgeItem } from '../types';
+
+type LocationFilter = 'all' | 'fridge' | 'freezer' | 'pantry';
+
+const LOCATION_LABELS: Record<string, string> = {
+  fridge: '냉장',
+  freezer: '냉동',
+  pantry: '팬트리',
+};
+
+function getExpiryStatus(expiresAt?: string) {
+  if (!expiresAt) return 'none';
+  const days = differenceInDays(new Date(expiresAt), new Date());
+  if (days < 0) return 'expired';
+  if (days <= 3) return 'warning';
+  return 'ok';
+}
+
+const EXPIRY_STYLES = {
+  expired: 'bg-danger text-white',
+  warning: 'bg-warning text-white',
+  ok: 'bg-gray-100 text-gray-600',
+  none: '',
+};
+
+async function callClaudeVision(base64: string): Promise<DetectedIngredient[]> {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY as string;
+  if (!apiKey) throw new Error('.env 파일에 VITE_ANTHROPIC_API_KEY가 없습니다.');
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+            {
+              type: 'text',
+              text: `이 이미지에서 보이는 식재료를 모두 찾아 JSON으로만 반환해줘.
+형식: { "ingredients": [{"name": "재료명(한국어)", "name_en": "English name", "quantity": "추정량"}] }
+JSON 외 다른 텍스트는 절대 포함하지 마.`,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as { error?: { message?: string } }).error?.message ?? `HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const text: string = data.content?.[0]?.text ?? '{}';
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { ingredients: [] };
+  return (parsed.ingredients ?? []).map((i: { name: string; name_en: string; quantity: string }) => ({
+    name: i.name,
+    nameEn: i.name_en,
+    quantity: i.quantity,
+  }));
+}
+
+export default function FridgePage() {
+  const { fridgeItems, removeFridgeItem, addFridgeItem, addDetectedToFridge, detectedIngredients, setDetectedIngredients } = useStore();
+  const { user } = useAuthStore();
+  const { freeUsesLeft, decrement } = useGuestStore();
+  const [filter, setFilter] = useState<LocationFilter>('all');
+  const [showManual, setShowManual] = useState(false);
+  const [showScan, setShowScan] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showRecipes, setShowRecipes] = useState(false);
+  const [loginPrompt, setLoginPrompt] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 게스트 사용 가능 여부 확인 후 횟수 차감, 초과 시 모달 표시
+  const checkAndConsume = (featureName: string): boolean => {
+    if (user) return true;
+    if (freeUsesLeft > 0) {
+      decrement();
+      return true;
+    }
+    setLoginPrompt(featureName);
+    return false;
+  };
+
+  const filtered = filter === 'all' ? fridgeItems : fridgeItems.filter((i) => i.location === filter);
+
+  const processFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('이미지 파일만 업로드할 수 있습니다.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert('파일 크기는 10MB 이하여야 합니다.');
+      return;
+    }
+    if (!checkAndConsume('AI 재료 인식')) return;
+    setScanError('');
+    setScanning(true);
+    setShowScan(true);
+    try {
+      const base64 = await compressImage(file);
+      const detected = await callClaudeVision(base64);
+      if (detected.length === 0) {
+        setScanError('재료를 인식하지 못했습니다. 더 밝고 선명한 사진을 사용해보세요.');
+        return;
+      }
+      setDetectedIngredients(detected);
+    } catch (err) {
+      setScanError(`오류: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Refrigerator className="w-7 h-7 text-info" />
+            냉장고 관리
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">{fridgeItems.length}개 재료 보유 중</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              if (!checkAndConsume('AI 레시피 추천')) return;
+              setShowRecipes(true);
+            }}
+            className="bg-warning text-white px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1 hover:bg-amber-600 transition-colors"
+          >
+            <ChefHat className="w-4 h-4" /> 레시피
+          </button>
+          <button
+            onClick={() => setShowManual(true)}
+            className="bg-primary text-white px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1 hover:bg-primary-dark transition-colors"
+          >
+            <Plus className="w-4 h-4" /> 추가
+          </button>
+        </div>
+      </div>
+
+      {/* 숨겨진 파일 입력 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+
+      {/* 드래그&드롭 / 클릭 업로드 영역 */}
+      <div
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all select-none ${
+          isDragOver
+            ? 'border-primary bg-green-50 scale-[1.01]'
+            : 'border-gray-300 hover:border-primary hover:bg-gray-50'
+        }`}
+      >
+        <div className="flex flex-col items-center gap-3">
+          {isDragOver ? (
+            <Upload className="w-12 h-12 text-primary animate-bounce" />
+          ) : (
+            <Camera className="w-12 h-12 text-gray-400" />
+          )}
+          <div>
+            <p className="text-sm text-gray-700 font-medium">
+              {isDragOver ? '여기에 놓으세요!' : '냉장고 사진을 드래그하거나 클릭하여 업로드'}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">AI가 자동으로 재료를 인식합니다 · JPEG, PNG, WEBP · 최대 10MB</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        {(['all', 'fridge', 'freezer', 'pantry'] as const).map((loc) => (
+          <button
+            key={loc}
+            onClick={() => setFilter(loc)}
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+              filter === loc ? 'bg-primary text-white' : 'bg-white text-gray-600 border border-gray-200'
+            }`}
+          >
+            {loc === 'all' ? '전체' : LOCATION_LABELS[loc]} ({loc === 'all' ? fridgeItems.length : fridgeItems.filter((i) => i.location === loc).length})
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-100">
+          <Refrigerator className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-500">재료가 없습니다</p>
+          <p className="text-sm text-gray-400 mt-1">사진을 업로드하거나 직접 재료를 추가하세요</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {filtered.map((item) => {
+            const status = getExpiryStatus(item.expiresAt);
+            return (
+              <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">{item.name}</span>
+                    <span className="text-xs text-gray-400">({item.nameEn})</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-gray-500">{item.quantity}</span>
+                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                      {LOCATION_LABELS[item.location]}
+                    </span>
+                    {item.expiresAt && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${EXPIRY_STYLES[status]}`}>
+                        {status === 'expired' ? '만료' : item.expiresAt}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button onClick={() => removeFridgeItem(item.id)} className="text-gray-300 hover:text-danger p-1">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showScan && (
+        <ScanModal
+          scanning={scanning}
+          detected={detectedIngredients}
+          error={scanError}
+          onClose={() => {
+            setShowScan(false);
+            setDetectedIngredients([]);
+            setScanError('');
+          }}
+          onConfirm={() => {
+            addDetectedToFridge(detectedIngredients);
+            setShowScan(false);
+          }}
+        />
+      )}
+
+      {showManual && <ManualAddModal onClose={() => setShowManual(false)} onAdd={addFridgeItem} />}
+
+      {showRecipes && <RecipeModal onClose={() => setShowRecipes(false)} ingredients={fridgeItems} />}
+
+      {loginPrompt && (
+        <LoginPromptModal feature={loginPrompt} onClose={() => setLoginPrompt(null)} />
+      )}
+    </div>
+  );
+}
+
+function ScanModal({
+  scanning,
+  detected,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  scanning: boolean;
+  detected: DetectedIngredient[];
+  error: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900">AI 재료 인식</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {scanning ? (
+          <div className="py-12 text-center">
+            <div className="animate-spin w-10 h-10 border-4 border-primary border-t-transparent rounded-full mx-auto" />
+            <p className="text-sm text-gray-500 mt-4">AI가 재료를 분석하고 있습니다...</p>
+          </div>
+        ) : error ? (
+          <div className="py-8 text-center space-y-3">
+            <p className="text-danger text-sm">{error}</p>
+            <button
+              onClick={onClose}
+              className="text-sm text-gray-500 underline"
+            >
+              닫기
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500">{detected.length}개 재료가 인식되었습니다</p>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {detected.map((item, i) => (
+                <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl p-3">
+                  <div>
+                    <span className="text-sm font-medium text-gray-800">{item.name}</span>
+                    <span className="text-xs text-gray-400 ml-2">{item.nameEn}</span>
+                  </div>
+                  <span className="text-xs text-gray-500">{item.quantity}</span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={onConfirm}
+              className="w-full bg-primary text-white py-3 rounded-xl font-medium hover:bg-primary-dark transition-colors"
+            >
+              냉장고에 추가하기
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ManualAddModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void;
+  onAdd: (item: Omit<FridgeItem, 'id' | 'createdAt'>) => void;
+}) {
+  const [name, setName] = useState('');
+  const [nameEn, setNameEn] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [location, setLocation] = useState<'fridge' | 'freezer' | 'pantry'>('fridge');
+  const [expiresAt, setExpiresAt] = useState('');
+
+  const handleSubmit = () => {
+    if (!name) return;
+    onAdd({
+      name,
+      nameEn: nameEn || name,
+      quantity: quantity || '1개',
+      unit: '',
+      location,
+      expiresAt: expiresAt || undefined,
+      addedVia: 'manual',
+    });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900">재료 직접 추가</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1">재료명 (한국어) *</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="예: 닭가슴살"
+            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1">영문명 (API 연동용)</label>
+          <input
+            value={nameEn}
+            onChange={(e) => setNameEn(e.target.value)}
+            placeholder="예: chicken breast"
+            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1">수량</label>
+            <input
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="예: 300g"
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1">유통기한</label>
+            <input
+              type="date"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1">보관 위치</label>
+          <div className="flex gap-2">
+            {(['fridge', 'freezer', 'pantry'] as const).map((loc) => (
+              <button
+                key={loc}
+                onClick={() => setLocation(loc)}
+                className={`flex-1 py-2 rounded-xl text-sm border transition-all ${
+                  location === loc ? 'border-primary bg-primary-light text-primary-dark' : 'border-gray-200 text-gray-500'
+                }`}
+              >
+                {LOCATION_LABELS[loc]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={handleSubmit}
+          disabled={!name}
+          className="w-full bg-primary text-white py-3 rounded-xl font-medium hover:bg-primary-dark transition-colors disabled:opacity-40"
+        >
+          추가하기
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface GeneratedRecipe {
+  title: string;
+  usedIngredients: string[];
+  extraIngredients: string[];
+  calories: number;
+  time: number;
+  steps: string[];
+}
+
+async function fetchAIRecipes(
+  ingredientNames: string[],
+  allergyNames: string[]
+): Promise<GeneratedRecipe[]> {
+  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY as string;
+  if (!apiKey) throw new Error('VITE_ANTHROPIC_API_KEY가 설정되지 않았습니다.');
+
+  const allergyNote = allergyNames.length > 0
+    ? `\n주의: 다음 알레르기 재료는 절대 사용하지 마: ${allergyNames.join(', ')}`
+    : '';
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2000,
+      messages: [
+        {
+          role: 'user',
+          content: `냉장고 재료: ${ingredientNames.join(', ')}${allergyNote}
+
+위 재료를 최대한 활용한 레시피 3가지를 JSON으로만 반환해줘.
+형식:
+{
+  "recipes": [
+    {
+      "title": "레시피명",
+      "usedIngredients": ["사용하는 냉장고 재료들"],
+      "extraIngredients": ["추가로 필요한 재료들 (소금, 기름 등 기본 양념 제외)"],
+      "calories": 칼로리(숫자),
+      "time": 조리시간(분, 숫자),
+      "steps": ["1. 조리 단계", "2. 조리 단계", "3. 조리 단계"]
+    }
+  ]
+}
+JSON 외 텍스트 없이 반환해.`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error((err as { error?: { message?: string } }).error?.message ?? `HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const text: string = data.content?.[0]?.text ?? '{}';
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { recipes: [] };
+  return parsed.recipes ?? [];
+}
+
+function RecipeModal({ onClose, ingredients }: { onClose: () => void; ingredients: FridgeItem[] }) {
+  const { allergies } = useStore();
+  const [recipes, setRecipes] = useState<GeneratedRecipe[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (ingredients.length === 0) {
+      setLoading(false);
+      setError('냉장고에 재료가 없습니다. 먼저 재료를 추가해주세요.');
+      return;
+    }
+    const ingredientNames = ingredients.map((i) => i.name);
+    const allergyNames = allergies.map((a) => a.allergenKo);
+    setLoading(true);
+    fetchAIRecipes(ingredientNames, allergyNames)
+      .then(setRecipes)
+      .catch((err) => setError(err instanceof Error ? err.message : '레시피 생성에 실패했습니다.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <ChefHat className="w-5 h-5 text-warning" />
+            AI 추천 레시피
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 사용 재료 목록 */}
+        <div className="bg-gray-50 rounded-xl p-3">
+          <p className="text-xs text-gray-500 mb-2 font-medium">냉장고 재료</p>
+          <div className="flex flex-wrap gap-1.5">
+            {ingredients.map((i) => (
+              <span key={i.id} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">
+                {i.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {allergies.length > 0 && (
+          <div className="bg-danger/5 rounded-xl p-3 text-xs text-gray-600 flex items-center gap-2">
+            <span>🚫</span>
+            <span>알레르기 제외: {allergies.map((a) => a.allergenKo).join(', ')}</span>
+          </div>
+        )}
+
+        {/* 로딩 */}
+        {loading && (
+          <div className="py-12 text-center space-y-3">
+            <div className="animate-spin w-10 h-10 border-4 border-warning border-t-transparent rounded-full mx-auto" />
+            <p className="text-sm text-gray-500">AI가 레시피를 생성하고 있습니다...</p>
+            <p className="text-xs text-gray-400">냉장고 재료를 분석 중 (약 5~10초)</p>
+          </div>
+        )}
+
+        {/* 오류 */}
+        {!loading && error && (
+          <div className="py-8 text-center space-y-2">
+            <p className="text-danger text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* 레시피 목록 */}
+        {!loading && !error && (
+          <div className="space-y-3">
+            {recipes.map((recipe, idx) => (
+              <div key={idx} className="bg-gray-50 rounded-2xl overflow-hidden">
+                {/* 헤더 */}
+                <button
+                  onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
+                  className="w-full text-left p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold text-gray-900">{recipe.title}</h3>
+                      <div className="flex gap-3 mt-1 text-xs text-gray-500">
+                        <span>🔥 {recipe.calories} kcal</span>
+                        <span>⏱ {recipe.time}분</span>
+                      </div>
+                    </div>
+                    <span className="text-gray-400 text-lg">{expandedIdx === idx ? '▲' : '▼'}</span>
+                  </div>
+
+                  {/* 재료 태그 */}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {recipe.usedIngredients.map((ing, i) => (
+                      <span key={i} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">
+                        ✓ {ing}
+                      </span>
+                    ))}
+                    {recipe.extraIngredients.map((ing, i) => (
+                      <span key={i} className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full">
+                        + {ing}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+
+                {/* 조리 단계 (펼쳐지는 영역) */}
+                {expandedIdx === idx && (
+                  <div className="px-4 pb-4 border-t border-gray-200 pt-3 space-y-2">
+                    <p className="text-xs font-medium text-gray-600 mb-2">조리 방법</p>
+                    {recipe.steps.map((step, i) => (
+                      <div key={i} className="flex gap-2 text-sm text-gray-700">
+                        <span className="shrink-0 w-5 h-5 bg-warning text-white text-xs rounded-full flex items-center justify-center font-bold">
+                          {i + 1}
+                        </span>
+                        <span>{step.replace(/^\d+\.\s*/, '')}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs text-center text-gray-400">
+          ✅ 초록 태그: 냉장고 재료 · 회색 태그: 추가 필요 재료
+        </p>
+      </div>
+    </div>
+  );
+}
