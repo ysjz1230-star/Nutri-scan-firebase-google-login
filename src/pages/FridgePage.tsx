@@ -61,7 +61,9 @@ async function callClaudeVision(base64: string): Promise<DetectedIngredient[]> {
             { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
             {
               type: 'text',
-              text: `이 이미지에서 보이는 식재료를 모두 찾아 JSON으로만 반환해줘.
+              text: `이 이미지에서 보이는 식재료(먹을 수 있는 음식 재료)만 찾아 JSON으로만 반환해줘.
+중요: 포장재, 용기, 봉지, 판, 트레이, 상자, 그릇, 냄비 등 식재료가 아닌 물건은 절대 포함하지 마.
+예를 들어 계란판은 제외하고 계란만 포함해야 해.
 형식: { "ingredients": [{"name": "재료명(한국어)", "name_en": "English name", "quantity": "추정량"}] }
 JSON 외 다른 텍스트는 절대 포함하지 마.`,
             },
