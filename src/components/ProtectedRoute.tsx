@@ -1,10 +1,8 @@
-import { Navigate, Outlet } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
-import { useGuestStore } from '../stores/useGuestStore';
 
 export default function ProtectedRoute({ children }: { children?: React.ReactNode }) {
-  const { user, loading } = useAuthStore();
-  const { freeUsesLeft } = useGuestStore();
+  const { loading } = useAuthStore();
 
   if (loading) {
     return (
@@ -17,11 +15,7 @@ export default function ProtectedRoute({ children }: { children?: React.ReactNod
     );
   }
 
-  // 로그인 사용자 또는 무료 횟수 남은 게스트 → 통과
-  if (user || freeUsesLeft > 0) {
-    return children ? <>{children}</> : <Outlet />;
-  }
-
-  // 비로그인 + 무료 횟수 소진 → 로그인 페이지
-  return <Navigate to="/login" replace />;
+  // 로그인 사용자 또는 게스트(횟수 소진 여부 관계없이) → 항상 통과
+  // AI 기능 제한은 각 페이지의 checkAndConsume에서 처리
+  return children ? <>{children}</> : <Outlet />;
 }

@@ -74,15 +74,15 @@ export default function LoginPage() {
           Google로 로그인
         </button>
 
-        {/* 무료 횟수가 남은 경우에만 둘러보기 버튼 표시 */}
-        {freeUsesLeft > 0 && (
-          <button
-            onClick={() => navigate('/')}
-            className="w-full py-2.5 rounded-2xl text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            먼저 둘러보기 (AI 기능 {freeUsesLeft}회 무료)
-          </button>
-        )}
+        {/* 항상 둘러보기 버튼 표시 */}
+        <button
+          onClick={() => navigate('/')}
+          className="w-full py-2.5 rounded-2xl text-sm text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          {freeUsesLeft > 0
+            ? `먼저 둘러보기 (AI 기능 ${freeUsesLeft}회 무료)`
+            : '로그인 없이 둘러보기'}
+        </button>
 
         <p className="text-center text-xs text-gray-400">
           로그인 시{' '}
