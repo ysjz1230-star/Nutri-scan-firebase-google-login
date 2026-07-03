@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Refrigerator, Camera, Plus, X, Trash2, ChefHat, Upload } from 'lucide-react';
+import { Refrigerator, Camera, Plus, X, Trash2, ChefHat, Upload, AlertTriangle, ArrowUpDown } from 'lucide-react';
 import { useStore } from '../stores/useStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useGuestStore } from '../stores/useGuestStore';
@@ -9,6 +9,7 @@ import LoginPromptModal from '../components/LoginPromptModal';
 import type { DetectedIngredient, FridgeItem } from '../types';
 
 type LocationFilter = 'all' | 'fridge' | 'freezer' | 'pantry';
+type SortType = 'default' | 'name' | 'expiry';
 
 const LOCATION_LABELS: Record<string, string> = {
   fridge: '냉장',
@@ -16,20 +17,27 @@ const LOCATION_LABELS: Record<string, string> = {
   pantry: '팬트리',
 };
 
-function getExpiryStatus(expiresAt?: string) {
-  if (!expiresAt) return 'none';
+function getExpiryInfo(expiresAt?: string) {
+  if (!expiresAt) return null;
   const days = differenceInDays(new Date(expiresAt), new Date());
-  if (days < 0) return 'expired';
-  if (days <= 3) return 'warning';
-  return 'ok';
+  if (days < 0)  return { label: `만료 D+${Math.abs(days)}`, dot: 'bg-red-500',   badge: 'bg-red-100 text-red-600' };
+  if (days === 0) return { label: 'D-Day',                    dot: 'bg-red-500',   badge: 'bg-red-100 text-red-600' };
+  if (days <= 3)  return { label: `D-${days}`,                dot: 'bg-orange-400',badge: 'bg-orange-100 text-orange-600' };
+  if (days <= 7)  return { label: `D-${days}`,                dot: 'bg-yellow-400',badge: 'bg-yellow-100 text-yellow-700' };
+  return           { label: `D-${days}`,                      dot: 'bg-green-400', badge: 'bg-green-100 text-green-700' };
 }
 
-const EXPIRY_STYLES = {
-  expired: 'bg-danger text-white',
-  warning: 'bg-warning text-white',
-  ok: 'bg-gray-100 text-gray-600',
-  none: '',
-};
+function sortItems(items: FridgeItem[], sort: SortType): FridgeItem[] {
+  const arr = [...items];
+  if (sort === 'name') return arr.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  if (sort === 'expiry') return arr.sort((a, b) => {
+    if (!a.expiresAt && !b.expiresAt) return 0;
+    if (!a.expiresAt) return 1;
+    if (!b.expiresAt) return -1;
+    return new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime();
+  });
+  return arr;
+}
 
 async function callClaudeVision(base64: string): Promise<DetectedIngredient[]> {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY as string;
@@ -84,6 +92,7 @@ export default function FridgePage() {
   const { user } = useAuthStore();
   const { freeUsesLeft, decrement } = useGuestStore();
   const [filter, setFilter] = useState<LocationFilter>('all');
+  const [sortType, setSortType] = useState<SortType>('default');
   const [showManual, setShowManual] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -104,7 +113,16 @@ export default function FridgePage() {
     return false;
   };
 
-  const filtered = filter === 'all' ? fridgeItems : fridgeItems.filter((i) => i.location === filter);
+  const filtered = sortItems(
+    filter === 'all' ? fridgeItems : fridgeItems.filter((i) => i.location === filter),
+    sortType
+  );
+
+  const urgentItems = fridgeItems.filter((i) => {
+    if (!i.expiresAt) return false;
+    const days = differenceInDays(new Date(i.expiresAt), new Date());
+    return days <= 3;
+  });
 
   const processFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -222,7 +240,19 @@ export default function FridgePage() {
         </div>
       </div>
 
-      <div className="flex gap-2">
+      {/* 유통기한 임박 배너 */}
+      {urgentItems.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-orange-500 shrink-0" />
+          <p className="text-sm text-orange-700">
+            <span className="font-semibold">{urgentItems.map((i) => i.name).join(', ')}</span>
+            {urgentItems.length === 1 ? '의' : ' 등'} 유통기한이 3일 이내입니다. 빨리 사용하세요!
+          </p>
+        </div>
+      )}
+
+      {/* 위치 필터 */}
+      <div className="flex gap-2 flex-wrap">
         {(['all', 'fridge', 'freezer', 'pantry'] as const).map((loc) => (
           <button
             key={loc}
@@ -236,6 +266,27 @@ export default function FridgePage() {
         ))}
       </div>
 
+      {/* 정렬 버튼 */}
+      <div className="flex items-center gap-2">
+        <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+        <span className="text-xs text-gray-400 shrink-0">정렬</span>
+        {([
+          { type: 'default', label: '등록순' },
+          { type: 'name',    label: '가나다순' },
+          { type: 'expiry',  label: '유통기한 임박순' },
+        ] as { type: SortType; label: string }[]).map(({ type, label }) => (
+          <button
+            key={type}
+            onClick={() => setSortType(type)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              sortType === type ? 'bg-gray-800 text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-gray-400'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {filtered.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-100">
           <Refrigerator className="w-12 h-12 text-gray-300 mx-auto mb-4" />
@@ -245,27 +296,31 @@ export default function FridgePage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filtered.map((item) => {
-            const status = getExpiryStatus(item.expiresAt);
+            const expiry = getExpiryInfo(item.expiresAt);
             return (
-              <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between">
-                <div>
+              <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between gap-3">
+                <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">{item.name}</span>
-                    <span className="text-xs text-gray-400">({item.nameEn})</span>
+                    {expiry && <span className={`w-2 h-2 rounded-full shrink-0 ${expiry.dot}`} />}
+                    <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                    <span className="text-xs text-gray-400 shrink-0">({item.nameEn})</span>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     <span className="text-xs text-gray-500">{item.quantity}</span>
                     <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
                       {LOCATION_LABELS[item.location]}
                     </span>
-                    {item.expiresAt && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${EXPIRY_STYLES[status]}`}>
-                        {status === 'expired' ? '만료' : item.expiresAt}
+                    {expiry && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${expiry.badge}`}>
+                        {expiry.label}
                       </span>
+                    )}
+                    {item.expiresAt && (
+                      <span className="text-xs text-gray-400">{item.expiresAt}</span>
                     )}
                   </div>
                 </div>
-                <button onClick={() => removeFridgeItem(item.id)} className="text-gray-300 hover:text-danger p-1">
+                <button onClick={() => removeFridgeItem(item.id)} className="text-gray-300 hover:text-danger p-1 shrink-0">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
