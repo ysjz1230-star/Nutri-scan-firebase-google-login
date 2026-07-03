@@ -43,7 +43,7 @@ export interface CalorieLog {
   carbsG: number;
   fatG: number;
   servingSize?: string;
-  source: 'manual' | 'recipe';
+  source: 'manual' | 'recipe' | 'ai';
 }
 
 export interface Recipe {
