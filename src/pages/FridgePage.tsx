@@ -326,26 +326,24 @@ export default function FridgePage() {
                     placeholder="재료명"
                     className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:border-primary"
                   />
-                  <div className="flex gap-2">
-                    <input
-                      value={editDraft.quantity}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, quantity: e.target.value }))}
-                      placeholder="수량 (예: 300g)"
-                      className="w-28 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
-                    />
-                    <div className="flex-1 relative">
+                  <div className="space-y-1 flex-1">
+                    <div className="flex gap-2 text-xs text-gray-400 px-1">
+                      <span className="w-28">수량</span>
+                      <span className="flex-1">유통기한 선택</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={editDraft.quantity}
+                        onChange={(e) => setEditDraft((d) => ({ ...d, quantity: e.target.value }))}
+                        placeholder="예: 300g"
+                        className="w-28 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
+                      />
                       <input
                         type="date"
                         value={editDraft.expiresAt}
                         onChange={(e) => setEditDraft((d) => ({ ...d, expiresAt: e.target.value }))}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
-                      />
-                      {!editDraft.expiresAt && (
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
-                          유통기한 (선택)
-                        </span>
-                      )}
-                    </div>
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
+                      /></div>
                     <button
                       onClick={() => saveEdit(item.id)}
                       disabled={!editDraft.name}
@@ -523,25 +521,24 @@ function ScanModal({
                     </button>
                   </div>
                   {/* 수량 + 유통기한 */}
-                  <div className="flex gap-2">
-                    <input
-                      value={item.quantity}
-                      onChange={(e) => update(i, 'quantity', e.target.value)}
-                      placeholder="수량 (예: 300g)"
-                      className="w-28 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
-                    />
-                    <div className="flex-1 relative">
+                  <div className="space-y-1">
+                    <div className="flex gap-2 text-xs text-gray-400 px-1">
+                      <span className="w-28">수량</span>
+                      <span className="flex-1">유통기한 선택</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={item.quantity}
+                        onChange={(e) => update(i, 'quantity', e.target.value)}
+                        placeholder="예: 300g"
+                        className="w-28 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
+                      />
                       <input
                         type="date"
                         value={item.expiresAt}
                         onChange={(e) => update(i, 'expiresAt', e.target.value)}
-                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
+                        className="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
                       />
-                      {!item.expiresAt && (
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
-                          유통기한 (선택)
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>
