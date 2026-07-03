@@ -103,12 +103,12 @@ export default function FridgePage() {
   const [showRecipes, setShowRecipes] = useState(false);
   const [loginPrompt, setLoginPrompt] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState({ name: '', quantity: '', expiresAt: '' });
+  const [editDraft, setEditDraft] = useState({ name: '', quantity: '', expiresAt: '', location: 'fridge' as FridgeLocation });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const startEdit = (item: FridgeItem) => {
     setEditingId(item.id);
-    setEditDraft({ name: item.name, quantity: item.quantity, expiresAt: item.expiresAt ?? '' });
+    setEditDraft({ name: item.name, quantity: item.quantity, expiresAt: item.expiresAt ?? '', location: item.location });
   };
 
   const saveEdit = (id: string) => {
@@ -116,6 +116,7 @@ export default function FridgePage() {
       name: editDraft.name,
       quantity: editDraft.quantity,
       expiresAt: editDraft.expiresAt || undefined,
+      location: editDraft.location,
     });
     setEditingId(null);
   };
@@ -326,6 +327,22 @@ export default function FridgePage() {
                     placeholder="재료명"
                     className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:border-primary"
                   />
+                  {/* 보관 위치 */}
+                  <div className="flex gap-1.5">
+                    {(['fridge', 'freezer', 'pantry'] as FridgeLocation[]).map((loc) => (
+                      <button
+                        key={loc}
+                        onClick={() => setEditDraft((d) => ({ ...d, location: loc }))}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                          editDraft.location === loc
+                            ? 'border-primary bg-primary-light text-primary-dark'
+                            : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        {LOCATION_LABELS[loc]}
+                      </button>
+                    ))}
+                  </div>
                   <div className="space-y-1 flex-1">
                     <div className="flex gap-2 text-xs text-gray-400 px-1">
                       <span className="w-28">수량</span>
@@ -441,11 +458,14 @@ export default function FridgePage() {
   );
 }
 
+type FridgeLocation = 'fridge' | 'freezer' | 'pantry';
+
 interface EditableItem {
   name: string;
   nameEn: string;
   quantity: string;
   expiresAt: string;
+  location: FridgeLocation;
 }
 
 function ScanModal({
@@ -465,7 +485,7 @@ function ScanModal({
 
   useEffect(() => {
     setEditItems(
-      detected.map((d) => ({ name: d.name, nameEn: d.nameEn, quantity: d.quantity, expiresAt: '' }))
+      detected.map((d) => ({ name: d.name, nameEn: d.nameEn, quantity: d.quantity, expiresAt: '', location: 'fridge' as FridgeLocation }))
     );
   }, [detected]);
 
@@ -519,6 +539,22 @@ function ScanModal({
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
+                  </div>
+                  {/* 보관 위치 */}
+                  <div className="flex gap-1.5">
+                    {(['fridge', 'freezer', 'pantry'] as FridgeLocation[]).map((loc) => (
+                      <button
+                        key={loc}
+                        onClick={() => update(i, 'location', loc)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                          item.location === loc
+                            ? 'border-primary bg-primary-light text-primary-dark'
+                            : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        {LOCATION_LABELS[loc]}
+                      </button>
+                    ))}
                   </div>
                   {/* 수량 + 유통기한 */}
                   <div className="space-y-1">
