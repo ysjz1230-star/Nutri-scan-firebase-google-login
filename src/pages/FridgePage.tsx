@@ -742,132 +742,229 @@ JSON 외 텍스트 없이 반환해.`,
 
 function RecipeModal({ onClose, ingredients }: { onClose: () => void; ingredients: FridgeItem[] }) {
   const { allergies } = useStore();
+  const [step, setStep] = useState<'select' | 'result'>('select');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(ingredients.map((i) => i.id)));
   const [recipes, setRecipes] = useState<GeneratedRecipe[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (ingredients.length === 0) {
-      setLoading(false);
-      setError('냉장고에 재료가 없습니다. 먼저 재료를 추가해주세요.');
-      return;
-    }
-    const ingredientNames = ingredients.map((i) => i.name);
-    const allergyNames = allergies.map((a) => a.allergenKo);
+  const selectedItems = ingredients.filter((i) => selectedIds.has(i.id));
+  const allSelected = selectedIds.size === ingredients.length;
+
+  const toggleItem = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(ingredients.map((i) => i.id)));
+
+  const handleGetRecipes = async () => {
+    if (selectedItems.length === 0) return;
+    setStep('result');
     setLoading(true);
-    fetchAIRecipes(ingredientNames, allergyNames)
-      .then(setRecipes)
-      .catch((err) => setError(err instanceof Error ? err.message : '레시피 생성에 실패했습니다.'))
-      .finally(() => setLoading(false));
-  }, []);
+    setError('');
+    try {
+      const result = await fetchAIRecipes(
+        selectedItems.map((i) => i.name),
+        allergies.map((a) => a.allergenKo)
+      );
+      setRecipes(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '레시피 생성에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <ChefHat className="w-5 h-5 text-warning" />
-            AI 추천 레시피
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        {/* 사용 재료 목록 */}
-        <div className="bg-gray-50 rounded-xl p-3">
-          <p className="text-xs text-gray-500 mb-2 font-medium">냉장고 재료</p>
-          <div className="flex flex-wrap gap-1.5">
-            {ingredients.map((i) => (
-              <span key={i.id} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">
-                {i.name}
-              </span>
-            ))}
-          </div>
-        </div>
+        {/* ── Step 1: 재료 선택 ── */}
+        {step === 'select' && (
+          <>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <ChefHat className="w-5 h-5 text-warning" />
+                레시피 재료 선택
+              </h2>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-        {allergies.length > 0 && (
-          <div className="bg-danger/5 rounded-xl p-3 text-xs text-gray-600 flex items-center gap-2">
-            <span>🚫</span>
-            <span>알레르기 제외: {allergies.map((a) => a.allergenKo).join(', ')}</span>
-          </div>
-        )}
+            <p className="text-sm text-gray-500">사용할 재료를 선택하세요</p>
 
-        {/* 로딩 */}
-        {loading && (
-          <div className="py-12 text-center space-y-3">
-            <div className="animate-spin w-10 h-10 border-4 border-warning border-t-transparent rounded-full mx-auto" />
-            <p className="text-sm text-gray-500">AI가 레시피를 생성하고 있습니다...</p>
-            <p className="text-xs text-gray-400">냉장고 재료를 분석 중 (약 5~10초)</p>
-          </div>
-        )}
-
-        {/* 오류 */}
-        {!loading && error && (
-          <div className="py-8 text-center space-y-2">
-            <p className="text-danger text-sm">{error}</p>
-          </div>
-        )}
-
-        {/* 레시피 목록 */}
-        {!loading && !error && (
-          <div className="space-y-3">
-            {recipes.map((recipe, idx) => (
-              <div key={idx} className="bg-gray-50 rounded-2xl overflow-hidden">
-                {/* 헤더 */}
+            {ingredients.length === 0 ? (
+              <div className="py-8 text-center text-sm text-gray-400">
+                냉장고에 재료가 없습니다. 먼저 재료를 추가해주세요.
+              </div>
+            ) : (
+              <>
                 <button
-                  onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
-                  className="w-full text-left p-4"
+                  onClick={toggleAll}
+                  className="text-sm font-medium text-primary hover:underline"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{recipe.title}</h3>
-                      <div className="flex gap-3 mt-1 text-xs text-gray-500">
-                        <span>🔥 {recipe.calories} kcal</span>
-                        <span>⏱ {recipe.time}분</span>
-                      </div>
-                    </div>
-                    <span className="text-gray-400 text-lg">{expandedIdx === idx ? '▲' : '▼'}</span>
-                  </div>
-
-                  {/* 재료 태그 */}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {recipe.usedIngredients.map((ing, i) => (
-                      <span key={i} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">
-                        ✓ {ing}
-                      </span>
-                    ))}
-                    {recipe.extraIngredients.map((ing, i) => (
-                      <span key={i} className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full">
-                        + {ing}
-                      </span>
-                    ))}
-                  </div>
+                  {allSelected ? '전체 해제' : '전체 선택'}
                 </button>
 
-                {/* 조리 단계 (펼쳐지는 영역) */}
-                {expandedIdx === idx && (
-                  <div className="px-4 pb-4 border-t border-gray-200 pt-3 space-y-2">
-                    <p className="text-xs font-medium text-gray-600 mb-2">조리 방법</p>
-                    {recipe.steps.map((step, i) => (
-                      <div key={i} className="flex gap-2 text-sm text-gray-700">
-                        <span className="shrink-0 w-5 h-5 bg-warning text-white text-xs rounded-full flex items-center justify-center font-bold">
-                          {i + 1}
-                        </span>
-                        <span>{step.replace(/^\d+\.\s*/, '')}</span>
-                      </div>
-                    ))}
+                <div className="grid grid-cols-2 gap-2">
+                  {ingredients.map((item) => {
+                    const selected = selectedIds.has(item.id);
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => toggleItem(item.id)}
+                        className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all ${
+                          selected
+                            ? 'border-primary bg-primary-light'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          selected ? 'border-primary bg-primary' : 'border-gray-300'
+                        }`}>
+                          {selected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className={`text-sm font-medium truncate ${selected ? 'text-primary-dark' : 'text-gray-700'}`}>
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-gray-400 truncate">{item.quantity}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {allergies.length > 0 && (
+                  <div className="bg-danger/5 rounded-xl p-3 text-xs text-gray-600 flex items-center gap-2">
+                    <span>🚫</span>
+                    <span>알레르기 자동 제외: {allergies.map((a) => a.allergenKo).join(', ')}</span>
                   </div>
                 )}
-              </div>
-            ))}
-          </div>
+
+                <button
+                  onClick={handleGetRecipes}
+                  disabled={selectedIds.size === 0}
+                  className="w-full bg-warning text-white py-3 rounded-xl font-semibold hover:bg-amber-600 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  <ChefHat className="w-4 h-4" />
+                  선택한 재료로 AI 레시피 추천 ({selectedIds.size}개)
+                </button>
+              </>
+            )}
+          </>
         )}
 
-        <p className="text-xs text-center text-gray-400">
-          ✅ 초록 태그: 냉장고 재료 · 회색 태그: 추가 필요 재료
-        </p>
+        {/* ── Step 2: 레시피 결과 ── */}
+        {step === 'result' && (
+          <>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <ChefHat className="w-5 h-5 text-warning" />
+                AI 추천 레시피
+              </h2>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 선택된 재료 */}
+            <div className="bg-gray-50 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-gray-500 font-medium">선택한 재료 ({selectedItems.length}개)</p>
+                <button
+                  onClick={() => { setStep('select'); setRecipes([]); setError(''); }}
+                  className="text-xs text-primary font-medium hover:underline"
+                >
+                  재료 변경 →
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedItems.map((i) => (
+                  <span key={i.id} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">
+                    {i.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {allergies.length > 0 && (
+              <div className="bg-danger/5 rounded-xl p-3 text-xs text-gray-600 flex items-center gap-2">
+                <span>🚫</span>
+                <span>알레르기 제외: {allergies.map((a) => a.allergenKo).join(', ')}</span>
+              </div>
+            )}
+
+            {loading && (
+              <div className="py-12 text-center space-y-3">
+                <div className="animate-spin w-10 h-10 border-4 border-warning border-t-transparent rounded-full mx-auto" />
+                <p className="text-sm text-gray-500">AI가 레시피를 생성하고 있습니다...</p>
+                <p className="text-xs text-gray-400">약 5~10초 소요</p>
+              </div>
+            )}
+
+            {!loading && error && (
+              <div className="py-8 text-center">
+                <p className="text-danger text-sm">{error}</p>
+              </div>
+            )}
+
+            {!loading && !error && (
+              <div className="space-y-3">
+                {recipes.map((recipe, idx) => (
+                  <div key={idx} className="bg-gray-50 rounded-2xl overflow-hidden">
+                    <button
+                      onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
+                      className="w-full text-left p-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold text-gray-900">{recipe.title}</h3>
+                          <div className="flex gap-3 mt-1 text-xs text-gray-500">
+                            <span>🔥 {recipe.calories} kcal</span>
+                            <span>⏱ {recipe.time}분</span>
+                          </div>
+                        </div>
+                        <span className="text-gray-400 text-lg">{expandedIdx === idx ? '▲' : '▼'}</span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {recipe.usedIngredients.map((ing, i) => (
+                          <span key={i} className="text-xs bg-primary-light text-primary-dark px-2 py-1 rounded-full">✓ {ing}</span>
+                        ))}
+                        {recipe.extraIngredients.map((ing, i) => (
+                          <span key={i} className="text-xs bg-gray-200 text-gray-500 px-2 py-1 rounded-full">+ {ing}</span>
+                        ))}
+                      </div>
+                    </button>
+                    {expandedIdx === idx && (
+                      <div className="px-4 pb-4 border-t border-gray-200 pt-3 space-y-2">
+                        <p className="text-xs font-medium text-gray-600 mb-2">조리 방법</p>
+                        {recipe.steps.map((step, i) => (
+                          <div key={i} className="flex gap-2 text-sm text-gray-700">
+                            <span className="shrink-0 w-5 h-5 bg-warning text-white text-xs rounded-full flex items-center justify-center font-bold">
+                              {i + 1}
+                            </span>
+                            <span>{step.replace(/^\d+\.\s*/, '')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="text-xs text-center text-gray-400">
+              ✅ 초록 태그: 선택 재료 · 회색 태그: 추가 필요 재료
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
