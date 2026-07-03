@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Refrigerator, Camera, Plus, X, Trash2, ChefHat, Upload, AlertTriangle, ArrowUpDown } from 'lucide-react';
+import { Refrigerator, Camera, Plus, X, Trash2, ChefHat, Upload, AlertTriangle, ArrowUpDown, Pencil, Check } from 'lucide-react';
 import { useStore } from '../stores/useStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useGuestStore } from '../stores/useGuestStore';
@@ -88,7 +88,7 @@ JSON 외 다른 텍스트는 절대 포함하지 마.`,
 }
 
 export default function FridgePage() {
-  const { fridgeItems, removeFridgeItem, addFridgeItem, detectedIngredients, setDetectedIngredients } = useStore();
+  const { fridgeItems, removeFridgeItem, addFridgeItem, updateFridgeItem, detectedIngredients, setDetectedIngredients } = useStore();
   const { user } = useAuthStore();
   const { freeUsesLeft, decrement } = useGuestStore();
   const [filter, setFilter] = useState<LocationFilter>('all');
@@ -100,7 +100,23 @@ export default function FridgePage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showRecipes, setShowRecipes] = useState(false);
   const [loginPrompt, setLoginPrompt] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState({ name: '', quantity: '', expiresAt: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = (item: FridgeItem) => {
+    setEditingId(item.id);
+    setEditDraft({ name: item.name, quantity: item.quantity, expiresAt: item.expiresAt ?? '' });
+  };
+
+  const saveEdit = (id: string) => {
+    updateFridgeItem(id, {
+      name: editDraft.name,
+      quantity: editDraft.quantity,
+      expiresAt: editDraft.expiresAt || undefined,
+    });
+    setEditingId(null);
+  };
 
   // 게스트 사용 가능 여부 확인 후 횟수 차감, 초과 시 모달 표시
   const checkAndConsume = (featureName: string): boolean => {
@@ -297,6 +313,55 @@ export default function FridgePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filtered.map((item) => {
             const expiry = getExpiryInfo(item.expiresAt);
+            const isEditing = editingId === item.id;
+
+            if (isEditing) {
+              return (
+                <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border-2 border-primary space-y-2">
+                  <input
+                    value={editDraft.name}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                    placeholder="재료명"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:border-primary"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={editDraft.quantity}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, quantity: e.target.value }))}
+                      placeholder="수량 (예: 300g)"
+                      className="w-28 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
+                    />
+                    <div className="flex-1 relative">
+                      <input
+                        type="date"
+                        value={editDraft.expiresAt}
+                        onChange={(e) => setEditDraft((d) => ({ ...d, expiresAt: e.target.value }))}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
+                      />
+                      {!editDraft.expiresAt && (
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                          유통기한 (선택)
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => saveEdit(item.id)}
+                      disabled={!editDraft.name}
+                      className="p-2 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-40 shrink-0"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg border border-gray-200 shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={item.id} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -320,9 +385,17 @@ export default function FridgePage() {
                     )}
                   </div>
                 </div>
-                <button onClick={() => removeFridgeItem(item.id)} className="text-gray-300 hover:text-danger p-1 shrink-0">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => startEdit(item)}
+                    className="text-gray-300 hover:text-primary p-1"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => removeFridgeItem(item.id)} className="text-gray-300 hover:text-danger p-1">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             );
           })}
