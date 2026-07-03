@@ -88,7 +88,7 @@ JSON 외 다른 텍스트는 절대 포함하지 마.`,
 }
 
 export default function FridgePage() {
-  const { fridgeItems, removeFridgeItem, addFridgeItem, addDetectedToFridge, detectedIngredients, setDetectedIngredients } = useStore();
+  const { fridgeItems, removeFridgeItem, addFridgeItem, detectedIngredients, setDetectedIngredients } = useStore();
   const { user } = useAuthStore();
   const { freeUsesLeft, decrement } = useGuestStore();
   const [filter, setFilter] = useState<LocationFilter>('all');
@@ -339,9 +339,20 @@ export default function FridgePage() {
             setDetectedIngredients([]);
             setScanError('');
           }}
-          onConfirm={() => {
-            addDetectedToFridge(detectedIngredients);
+          onConfirm={(editedItems) => {
+            editedItems.forEach((item) =>
+              addFridgeItem({
+                name: item.name,
+                nameEn: item.nameEn,
+                quantity: item.quantity,
+                unit: '',
+                location: 'fridge',
+                expiresAt: item.expiresAt || undefined,
+                addedVia: 'camera',
+              })
+            );
             setShowScan(false);
+            setDetectedIngredients([]);
           }}
         />
       )}
@@ -357,6 +368,13 @@ export default function FridgePage() {
   );
 }
 
+interface EditableItem {
+  name: string;
+  nameEn: string;
+  quantity: string;
+  expiresAt: string;
+}
+
 function ScanModal({
   scanning,
   detected,
@@ -368,11 +386,25 @@ function ScanModal({
   detected: DetectedIngredient[];
   error: string;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (items: EditableItem[]) => void;
 }) {
+  const [editItems, setEditItems] = useState<EditableItem[]>([]);
+
+  useEffect(() => {
+    setEditItems(
+      detected.map((d) => ({ name: d.name, nameEn: d.nameEn, quantity: d.quantity, expiresAt: '' }))
+    );
+  }, [detected]);
+
+  const update = (idx: number, field: keyof EditableItem, value: string) =>
+    setEditItems((prev) => prev.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
+
+  const remove = (idx: number) =>
+    setEditItems((prev) => prev.filter((_, i) => i !== idx));
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+      <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900">AI 재료 인식</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -388,33 +420,69 @@ function ScanModal({
         ) : error ? (
           <div className="py-8 text-center space-y-3">
             <p className="text-danger text-sm">{error}</p>
-            <button
-              onClick={onClose}
-              className="text-sm text-gray-500 underline"
-            >
-              닫기
-            </button>
+            <button onClick={onClose} className="text-sm text-gray-500 underline">닫기</button>
           </div>
         ) : (
           <>
-            <p className="text-sm text-gray-500">{detected.length}개 재료가 인식되었습니다</p>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {detected.map((item, i) => (
-                <div key={i} className="flex items-center justify-between bg-gray-50 rounded-xl p-3">
-                  <div>
-                    <span className="text-sm font-medium text-gray-800">{item.name}</span>
-                    <span className="text-xs text-gray-400 ml-2">{item.nameEn}</span>
+            <p className="text-sm text-gray-500">
+              <span className="font-medium text-gray-800">{editItems.length}개</span> 재료 인식 ·
+              이름·수량 수정, 불필요한 재료 삭제 후 추가하세요
+            </p>
+
+            <div className="space-y-2">
+              {editItems.map((item, i) => (
+                <div key={i} className="bg-gray-50 rounded-xl p-3 space-y-2">
+                  {/* 재료명 + 삭제 */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={item.name}
+                      onChange={(e) => update(i, 'name', e.target.value)}
+                      placeholder="재료명"
+                      className="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:border-primary"
+                    />
+                    <button
+                      onClick={() => remove(i)}
+                      className="text-gray-300 hover:text-danger shrink-0 p-1"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-                  <span className="text-xs text-gray-500">{item.quantity}</span>
+                  {/* 수량 + 유통기한 */}
+                  <div className="flex gap-2">
+                    <input
+                      value={item.quantity}
+                      onChange={(e) => update(i, 'quantity', e.target.value)}
+                      placeholder="수량 (예: 300g)"
+                      className="w-28 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary"
+                    />
+                    <div className="flex-1 relative">
+                      <input
+                        type="date"
+                        value={item.expiresAt}
+                        onChange={(e) => update(i, 'expiresAt', e.target.value)}
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-primary text-gray-600"
+                      />
+                      {!item.expiresAt && (
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                          유통기한 (선택)
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-            <button
-              onClick={onConfirm}
-              className="w-full bg-primary text-white py-3 rounded-xl font-medium hover:bg-primary-dark transition-colors"
-            >
-              냉장고에 추가하기
-            </button>
+
+            {editItems.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-4">모든 재료가 삭제되었습니다</p>
+            ) : (
+              <button
+                onClick={() => onConfirm(editItems)}
+                className="w-full bg-primary text-white py-3 rounded-xl font-medium hover:bg-primary-dark transition-colors"
+              >
+                냉장고에 추가하기 ({editItems.length}개)
+              </button>
+            )}
           </>
         )}
       </div>
